@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/cloudfront"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/honeycombio/honeyaws/logbucket"
 	"github.com/honeycombio/honeyaws/options"
 	"github.com/honeycombio/honeyaws/publisher"
@@ -77,7 +78,27 @@ Your write key is available at https://ui.honeycomb.io/account`)
 				}
 			}
 
-			stater := state.NewFileStater(opt.StateDir, logbucket.AWSCloudFront)
+			var stater state.Stater
+
+			if opt.HighAvail {
+				svc := dynamodb.New(sess)
+				input := &dynamodb.DescribeTableInput{
+					TableName: aws.String("HoneyELBAccessLogBuckets"),
+				}
+				_, err := svc.DescribeTable(input)
+				if err != nil {
+					// For some reason, we cannot write to
+					// the table or access it
+					logrus.Fatal(`--high-availability requires an existing DynamoDB tabled named HoneyELBAccessLogBuckets, please refer to the README.`)
+				}
+
+				stater = state.NewDynamoDBStater(sess, logbucket.AWSCloudFront)
+				logrus.Info("High availability enabled - using DynamoDB")
+
+			} else {
+				stater = state.NewFileStater(opt.StateDir, logbucket.AWSCloudFront)
+			}
+
 			downloadsCh := make(chan state.DownloadedObject)
 			defaultPublisher := publisher.NewHoneycombPublisher(opt, stater, publisher.NewCloudFrontEventParser(opt.SampleRate))
 
